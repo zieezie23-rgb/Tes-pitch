@@ -31,6 +31,21 @@ select{width:100%;padding:11px;border:1px solid #ccc;border-radius:10px;font-siz
 .chart{width:100%;height:110px;background:#101820;border-radius:12px;margin-top:10px}
 .status{text-align:center;font-size:13px;color:#666;margin-top:8px}
 .apply{width:100%;margin-top:12px;background:#2563eb;color:#fff}
+
+.analysisPopup{position:fixed;inset:0;background:rgba(0,0,0,.58);display:none;align-items:center;justify-content:center;padding:16px;z-index:9999}
+.analysisPopup.show{display:flex}
+.analysisCard{width:100%;max-width:500px;max-height:90vh;overflow:auto;background:#fff;border-radius:22px;padding:20px;box-shadow:0 15px 45px rgba(0,0,0,.3)}
+.analysisCard h2{margin:0 0 5px;text-align:center}
+.analysisSub{text-align:center;color:#666;font-size:13px;margin-bottom:15px}
+.analysisGrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.analysisItem{background:#f4f6fa;border-radius:13px;padding:12px}
+.analysisItem .name{font-size:13px;color:#666}
+.analysisItem .val{font-size:20px;font-weight:bold;margin-top:4px}
+.analysisItem .cat{font-size:12px;margin-top:5px;font-weight:bold}
+.analysisFull{grid-column:1/-1}
+.closeAnalysis{width:100%;margin-top:15px;background:#2563eb;color:#fff}
+.analyzing{display:none;text-align:center;padding:15px}
+
 .note{font-size:12px;color:#777;line-height:1.45;margin-top:12px}
 </style>
 </head>
@@ -152,14 +167,183 @@ document.getElementById("audioFile").addEventListener("change", function(){
  document.getElementById("fileInfo").textContent=file.name+" • "+Math.round(file.size/1024)+" KB";
 });
 
-function playUploaded(){
+async function playUploaded(){
  if(!uploadedAudio){
    alert("Pilih file audio terlebih dahulu.");
    return;
  }
  speechSynthesis.cancel();
+
+ const file=document.getElementById("audioFile").files[0];
+ const popup=document.getElementById("analysisPopup");
+ const grid=document.getElementById("analysisGrid");
+ const loading=document.getElementById("analyzing");
+
+ popup.classList.add("show");
+ document.getElementById("analysisFileName").textContent=file.name;
+ grid.style.display="none";
+ loading.style.display="block";
+
  const a=new Audio(uploadedAudio);
- a.play().catch(()=>alert("File audio tidak dapat diputar."));
+ a.play().catch(()=>{});
+
+ try{
+   const result=await analyzeAudioFile(file);
+   showAnalysis(result);
+ }catch(e){
+   loading.textContent="⚠️ Audio tidak dapat dianalisis oleh browser ini.";
+   console.error(e);
+ }
+}
+
+function closeAnalysis(){
+ document.getElementById("analysisPopup").classList.remove("show");
+}
+
+function avg(arr){
+ return arr.length ? arr.reduce((a,b)=>a+b,0)/arr.length : 0;
+}
+
+function rmsOf(arr){
+ let s=0;
+ for(const x of arr)s+=x*x;
+ return Math.sqrt(s/Math.max(1,arr.length));
+}
+
+function pitchFromBuffer(data,sr){
+ const n=data.length;
+ let rms=rmsOf(data);
+ if(rms<0.012)return -1;
+ let bestLag=-1,best=-Infinity;
+ const minLag=Math.floor(sr/1000);
+ const maxLag=Math.min(Math.floor(sr/60),n-2);
+ for(let lag=minLag;lag<=maxLag;lag++){
+   let c=0,den=0;
+   for(let i=0;i<n-lag;i++){
+     c+=data[i]*data[i+lag];
+     den+=Math.abs(data[i])+Math.abs(data[i+lag]);
+   }
+   c/=Math.max(1,den);
+   if(c>best){best=c;bestLag=lag}
+ }
+ return bestLag>0 && best>.18 ? sr/bestLag : -1;
+}
+
+function classifyPitch(hz){
+ if(!hz)return ["Tidak terdeteksi","Tidak cukup sinyal suara"];
+ if(hz<140)return ["Rendah","Nada dasar cenderung rendah"];
+ if(hz<190)return ["Sedang","Nada dasar berada di rentang sedang"];
+ if(hz<260)return ["Tinggi","Nada dasar cenderung tinggi"];
+ return ["Sangat tinggi","Nada dasar sangat tinggi"];
+}
+
+function classifyVolume(db){
+ if(db<-35)return ["Sangat lembut","Energi audio rendah"];
+ if(db<-24)return ["Lembut","Energi audio relatif rendah"];
+ if(db<-14)return ["Sedang","Tingkat suara sedang"];
+ if(db<-7)return ["Keras","Energi audio cukup tinggi"];
+ return ["Sangat keras","Energi audio sangat tinggi"];
+}
+
+function classifyRate(v){
+ if(v<1.2)return ["Lambat","Aktivitas suara rendah"];
+ if(v<2.2)return ["Sedang","Aktivitas suara sedang"];
+ return ["Cepat","Aktivitas suara tinggi"];
+}
+
+function classifyEnergy(rms){
+ if(rms<.025)return ["Rendah","Energi rata-rata rendah"];
+ if(rms<.07)return ["Sedang","Energi rata-rata sedang"];
+ return ["Tinggi","Energi rata-rata tinggi"];
+}
+
+function classifyIntonation(pitches){
+ if(pitches.length<3)return ["Tidak cukup data","Variasi pitch tidak cukup untuk dinilai"];
+ const mean=avg(pitches);
+ const sd=Math.sqrt(avg(pitches.map(x=>(x-mean)**2)));
+ const pct=mean?sd/mean:0;
+ if(pct<.05)return ["Datar","Perubahan pitch kecil"];
+ if(pct<.12)return ["Moderat","Ada naik-turun pitch"];
+ return ["Ekspresif","Variasi pitch cukup besar"];
+}
+
+async function analyzeAudioFile(file){
+ const arrayBuffer=await file.arrayBuffer();
+ const ac=new (window.AudioContext||window.webkitAudioContext)();
+ const decoded=await ac.decodeAudioData(arrayBuffer.slice(0));
+ const channel=decoded.getChannelData(0);
+ const sr=decoded.sampleRate;
+ const duration=decoded.duration;
+
+ // Overall RMS and dBFS.
+ const rms=rmsOf(channel);
+ const db=20*Math.log10(Math.max(rms,1e-7));
+
+ // Analyze ~50ms windows for pitch, energy and speech-like activity.
+ const win=Math.floor(sr*.05);
+ const hop=Math.floor(sr*.025);
+ const pitches=[], energies=[], active=[];
+ for(let start=0;start+win<channel.length;start+=hop){
+   const buf=channel.slice(start,start+win);
+   const e=rmsOf(buf);
+   energies.push(e);
+   if(e>.012){
+     const p=pitchFromBuffer(buf,sr);
+     if(p>60&&p<1000)pitches.push(p);
+     active.push(1);
+   }else active.push(0);
+ }
+
+ const pitch=avg(pitches);
+ // Estimate speaking activity events from changes in the energy envelope.
+ let events=0, wasHigh=false;
+ for(let i=0;i<energies.length;i++){
+   const high=energies[i] > Math.max(.012,rms*.75);
+   if(high&&!wasHigh)events++;
+   wasHigh=high;
+ }
+ const activityPerSec=events/Math.max(duration,.1);
+ const rateValue=Math.max(.5,Math.min(3,.65+activityPerSec*.35));
+
+ const pitchClass=classifyPitch(pitch);
+ const volumeClass=classifyVolume(db);
+ const rateClass=classifyRate(rateValue);
+ const energyClass=classifyEnergy(rms);
+ const intonationClass=classifyIntonation(pitches);
+
+ let character="Netral";
+ if(pitch>190 && rateValue>=1.2 && energyClass[0]==="Tinggi") character="Ceria / energik";
+ else if(pitch>190 && rateValue<1.2) character="Tinggi / lembut";
+ else if(pitch<140 && rateValue>=1.2) character="Berat / cepat";
+ else if(pitch<140) character="Rendah / tenang";
+ else if(energyClass[0]==="Tinggi") character="Berenergi";
+ else character="Netral / sedang";
+
+ await ac.close();
+ return {pitch,db,rateValue,rms,duration,pitchClass,volumeClass,rateClass,energyClass,intonationClass,character};
+}
+
+function showAnalysis(r){
+ document.getElementById("analyzing").style.display="none";
+ document.getElementById("analysisGrid").style.display="grid";
+ document.getElementById("aPitch").textContent=r.pitch?Math.round(r.pitch)+" Hz":"—";
+ document.getElementById("aPitchCat").textContent="Kategori: "+r.pitchClass[0]+" — "+r.pitchClass[1];
+
+ document.getElementById("aRate").textContent=r.rateValue.toFixed(2);
+ document.getElementById("aRateCat").textContent="Kategori: "+r.rateClass[0]+" — "+r.rateClass[1];
+
+ document.getElementById("aVolume").textContent=r.db.toFixed(1)+" dBFS";
+ document.getElementById("aVolumeCat").textContent="Kategori: "+r.volumeClass[0]+" — "+r.volumeClass[1];
+
+ document.getElementById("aEnergy").textContent=r.rms.toFixed(3);
+ document.getElementById("aEnergyCat").textContent="Kategori: "+r.energyClass[0]+" — "+r.energyClass[1];
+
+ document.getElementById("aIntonation").textContent=r.intonationClass[0];
+ document.getElementById("aIntonationCat").textContent=r.intonationClass[1];
+
+ document.getElementById("aDuration").textContent=r.duration.toFixed(2)+" detik";
+ document.getElementById("aCharacter").textContent=r.character;
+ document.getElementById("aCharacterCat").textContent="Kategori gabungan dari pitch, rate, energi, dan karakter intonasi.";
 }
 
 // Tekan sekali = satu langkah. Tekan dan tahan = terus berubah.
@@ -303,5 +487,58 @@ function applyMicPitch(){
 speechSynthesis.onvoiceschanged=loadVoices;
 loadVoices();update();
 </script>
+
+<div class="analysisPopup" id="analysisPopup">
+  <div class="analysisCard">
+    <h2>🎧 Hasil Analisis Suara</h2>
+    <div class="analysisSub" id="analysisFileName">File audio</div>
+    <div class="analyzing" id="analyzing">⏳ Menganalisis audio...</div>
+    <div class="analysisGrid" id="analysisGrid">
+      <div class="analysisItem">
+        <div class="name">🎵 Pitch</div>
+        <div class="val" id="aPitch">—</div>
+        <div class="cat" id="aPitchCat">—</div>
+      </div>
+      <div class="analysisItem">
+        <div class="name">🗣️ Rate</div>
+        <div class="val" id="aRate">—</div>
+        <div class="cat" id="aRateCat">—</div>
+      </div>
+      <div class="analysisItem">
+        <div class="name">🔊 Volume</div>
+        <div class="val" id="aVolume">—</div>
+        <div class="cat" id="aVolumeCat">—</div>
+      </div>
+      <div class="analysisItem">
+        <div class="name">⚡ Energy</div>
+        <div class="val" id="aEnergy">—</div>
+        <div class="cat" id="aEnergyCat">—</div>
+      </div>
+      <div class="analysisItem">
+        <div class="name">📈 Intonation</div>
+        <div class="val" id="aIntonation">—</div>
+        <div class="cat" id="aIntonationCat">—</div>
+      </div>
+      <div class="analysisItem">
+        <div class="name">⏱️ Durasi</div>
+        <div class="val" id="aDuration">—</div>
+        <div class="cat">Informasi audio</div>
+      </div>
+      <div class="analysisItem analysisFull">
+        <div class="name">🎙️ Karakter suara</div>
+        <div class="val" id="aCharacter">—</div>
+        <div class="cat" id="aCharacterCat">Kategori gabungan berdasarkan hasil pengukuran</div>
+      </div>
+      <div class="analysisItem analysisFull">
+        <div class="name">ℹ️ Catatan</div>
+        <div class="cat" style="font-weight:normal;line-height:1.45">
+          Pitch dan volume dapat dihitung dari sinyal audio. Rate adalah estimasi aktivitas/kecepatan suara, bukan pengukuran kata per menit. Intonasi adalah estimasi variasi pitch. Hasil paling akurat untuk suara bicara yang jelas dan minim musik/noise.
+        </div>
+      </div>
+    </div>
+    <button class="closeAnalysis" onclick="closeAnalysis()">Tutup</button>
+  </div>
+</div>
+
 </body>
 </html>

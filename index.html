@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Uji TTS Pitch & Rate</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#eef7ff;font-family:Arial,sans-serif;padding:14px;color:#222}
+.card{max-width:480px;margin:auto;background:#fff;border-radius:22px;padding:20px;box-shadow:0 8px 25px #0002}
+h1{text-align:center;margin:0 0 15px}
+.sentence{background:#fff8dc;border-radius:14px;padding:15px;text-align:center;font-size:20px;font-weight:bold}
+.control{margin:18px 0}.head{display:flex;justify-content:space-between;font-weight:bold}.value{font-size:21px}
+.row{display:flex;gap:9px;margin-top:8px}button{flex:1;border:0;border-radius:12px;padding:12px;font-size:16px;font-weight:bold;background:#e8eef7}
+button:active{transform:scale(.97)}
+.listen{width:100%;background:#ff9817;color:#fff;font-size:19px;margin-top:4px}
+.stop{width:100%;margin-top:8px}
+.auto{width:100%;margin-top:8px;background:#7657e8;color:#fff}
+select{width:100%;padding:11px;border:1px solid #ccc;border-radius:10px;font-size:15px;margin-top:8px}
+.mic{border-top:1px solid #ddd;margin-top:22px;padding-top:18px}
+.micBtn{width:100%;background:#20a466;color:#fff}
+.meter{height:14px;background:#e5e5e5;border-radius:20px;overflow:hidden;margin:12px 0}
+.meter i{display:block;width:0;height:100%;background:#20a466}
+.readout{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.box{background:#f4f6fa;border-radius:12px;padding:12px;text-align:center}.box strong{display:block;font-size:20px;margin-top:4px}
+.chart{width:100%;height:110px;background:#101820;border-radius:12px;margin-top:10px}
+.status{text-align:center;font-size:13px;color:#666;margin-top:8px}
+.apply{width:100%;margin-top:12px;background:#2563eb;color:#fff}
+.note{font-size:12px;color:#777;line-height:1.45;margin-top:12px}
+</style>
+</head>
+<body>
+<div class="card">
+<h1>🔊 Uji TTS</h1>
+<div class="sentence">"hallo, ayo belajar bersama"</div>
+
+<div class="control">
+<div class="head"><span>🎵 Pitch</span><span class="value" id="pitchValue">1.00</span></div>
+<div class="row">
+<button class="holdBtn" data-action="pitchDown">− 0.10</button>
+<button class="holdBtn" data-action="pitchUp">+ 0.10</button>
+</div>
+</div>
+
+<div class="control">
+<div class="head"><span>🗣️ Rate</span><span class="value" id="rateValue">0.50</span></div>
+<div class="row">
+<button class="holdBtn" data-action="rateDown">− 0.05</button>
+<button class="holdBtn" data-action="rateUp">+ 0.05</button>
+</div>
+</div>
+
+<div class="control">
+<div class="head"><span>🎙️ Voice</span></div>
+<select id="voiceSelect"></select>
+</div>
+
+<button class="listen" onclick="speak()">🔊 Dengarkan</button>
+<button class="stop" onclick="stopSpeak()">⏹ Berhenti</button>
+<button class="auto" id="autoBtn" onclick="toggleAuto()">✨ Auto Tone: OFF</button>
+
+<div class="mic">
+<h3>🎤 Pengukur Microphone</h3>
+<button class="micBtn" id="micBtn" onclick="toggleMic()">🎙️ Mulai Pengukuran</button>
+<div class="meter"><i id="level"></i></div>
+<div class="readout">
+<div class="box">Pitch suara<strong id="micPitch">— Hz</strong></div>
+<div class="box">Intensitas<strong id="micVolume">—</strong></div>
+</div>
+<canvas class="chart" id="chart"></canvas>
+<div class="status" id="status">Microphone belum aktif</div>
+<button class="apply" onclick="applyMicPitch()">↗ Terapkan Pitch Terdeteksi</button>
+<div class="note">
+Pengukuran pitch memakai analisis frekuensi microphone. Rate bicara tidak bisa dihitung secara akurat hanya dari sinyal microphone, jadi halaman ini tidak mengklaim angka rate sebagai pengukuran ilmiah.
+Untuk microphone, buka halaman melalui HTTPS atau localhost dan izinkan akses microphone.
+</div>
+</div>
+</div>
+
+<script>
+const text="hallo, ayo belajar bersama";
+let pitch=1,rate=.5,voices=[],autoTone=false;
+let ctx=null,analyser=null,stream=null,raf=null,currentMicPitch=0;
+const pv=document.getElementById("pitchValue"),rv=document.getElementById("rateValue"),vs=document.getElementById("voiceSelect");
+
+function update(){pv.textContent=pitch.toFixed(2);rv.textContent=rate.toFixed(2)}
+function changePitch(x){pitch=Math.max(1,Math.min(20,Math.round((pitch+x)*100)/100));update()}
+function changeRate(x){rate=Math.max(.5,Math.min(3,Math.round((rate+x)*100)/100));update()}
+
+function loadVoices(){
+ voices=speechSynthesis.getVoices();vs.innerHTML="";
+ const id=voices.filter(v=>v.lang&&v.lang.toLowerCase().startsWith("id"));
+ const list=id.length?id:voices;
+ list.forEach(v=>{let o=document.createElement("option");o.value=voices.indexOf(v);o.textContent=v.name+" — "+v.lang;vs.appendChild(o)});
+ if(!list.length)vs.innerHTML="<option>Voice TTS tidak ditemukan</option>";
+}
+function speak(){
+ speechSynthesis.cancel();
+ let p=pitch;
+ if(autoTone)p=Math.max(1,Math.min(20,p+0.35*Math.sin(Date.now()/140)));
+ const u=new SpeechSynthesisUtterance(text);
+ u.lang="id-ID";u.pitch=p;u.rate=rate;u.volume=1;
+ const i=parseInt(vs.value);if(!isNaN(i)&&voices[i])u.voice=voices[i];
+ speechSynthesis.speak(u);
+}
+function stopSpeak(){speechSynthesis.cancel()}
+
+// Tekan sekali = satu langkah. Tekan dan tahan = terus berubah.
+// Berfungsi untuk touch screen dan mouse.
+const holdTimers = new WeakMap();
+
+function startHold(btn){
+  const action = btn.dataset.action;
+  const step = {
+    pitchDown: -.10,
+    pitchUp: .10,
+    rateDown: -.05,
+    rateUp: .05
+  }[action];
+
+  if(step === undefined) return;
+
+  // Langkah pertama langsung dijalankan.
+  if(action.startsWith("pitch")) changePitch(step);
+  else changeRate(step);
+
+  // Setelah jeda singkat, ulangi terus.
+  const timeout = setTimeout(() => {
+    const interval = setInterval(() => {
+      if(action.startsWith("pitch")) changePitch(step);
+      else changeRate(step);
+    }, 70);
+    holdTimers.set(btn, {interval});
+  }, 300);
+
+  holdTimers.set(btn, {timeout});
+}
+
+function stopHold(btn){
+  const state = holdTimers.get(btn);
+  if(!state) return;
+  if(state.timeout) clearTimeout(state.timeout);
+  if(state.interval) clearInterval(state.interval);
+  holdTimers.delete(btn);
+}
+
+document.querySelectorAll(".holdBtn").forEach(btn => {
+  btn.addEventListener("pointerdown", e => {
+    e.preventDefault();
+    btn.setPointerCapture?.(e.pointerId);
+    startHold(btn);
+  });
+  btn.addEventListener("pointerup", e => {
+    e.preventDefault();
+    stopHold(btn);
+  });
+  btn.addEventListener("pointercancel", () => stopHold(btn));
+  btn.addEventListener("pointerleave", e => {
+    if(e.buttons) stopHold(btn);
+  });
+  btn.addEventListener("contextmenu", e => e.preventDefault());
+});
+
+function toggleAuto(){
+ autoTone=!autoTone;
+ document.getElementById("autoBtn").textContent="✨ Auto Tone: "+(autoTone?"ON":"OFF");
+ document.getElementById("autoBtn").style.background=autoTone?"#20a466":"#7657e8";
+}
+
+async function toggleMic(){
+ if(stream){stopMic();return}
+ if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){
+  alert("Browser tidak menyediakan akses microphone. Buka melalui HTTPS atau localhost.");
+  return;
+ }
+ try{
+  stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+  ctx=new(window.AudioContext||window.webkitAudioContext)();
+  analyser=ctx.createAnalyser();analyser.fftSize=2048;analyser.smoothingTimeConstant=.15;
+  ctx.createMediaStreamSource(stream).connect(analyser);
+  document.getElementById("micBtn").textContent="⏹ Berhenti Pengukuran";
+  document.getElementById("status").textContent="Microphone aktif — berbicaralah";
+  measure();
+ }catch(e){
+  alert("Akses microphone ditolak/tidak tersedia. Pastikan izin microphone diberikan dan halaman dibuka melalui HTTPS atau localhost.");
+ }
+}
+function stopMic(){
+ if(raf)cancelAnimationFrame(raf);
+ if(stream)stream.getTracks().forEach(t=>t.stop());
+ if(ctx)ctx.close();
+ stream=null;ctx=null;analyser=null;
+ document.getElementById("micBtn").textContent="🎙️ Mulai Pengukuran";
+ document.getElementById("status").textContent="Microphone belum aktif";
+ document.getElementById("level").style.width="0%";
+}
+
+function measure(){
+ if(!analyser)return;
+ const data=new Float32Array(analyser.fftSize);
+ analyser.getFloatTimeDomainData(data);
+ let sum=0;
+ for(const x of data)sum+=x*x;
+ const rms=Math.sqrt(sum/data.length);
+ document.getElementById("level").style.width=Math.min(100,rms*500)+"%";
+ document.getElementById("micVolume").textContent=rms.toFixed(3);
+ const f=autoCorrelate(data,ctx.sampleRate);
+ if(f>50&&f<1200){
+  currentMicPitch=f;
+  document.getElementById("micPitch").textContent=Math.round(f)+" Hz";
+ }else document.getElementById("micPitch").textContent="— Hz";
+ draw(data);
+ raf=requestAnimationFrame(measure);
+}
+function autoCorrelate(buf,sr){
+ let rms=0;for(let x of buf)rms+=x*x;rms=Math.sqrt(rms/buf.length);
+ if(rms<.012)return -1;
+ let SIZE=buf.length,r1=0,r2=SIZE-1,th=.2;
+ for(let i=0;i<SIZE/2;i++){if(Math.abs(buf[i])<th){r1=i;break}}
+ for(let i=1;i<SIZE/2;i++){if(Math.abs(buf[SIZE-i])<th){r2=SIZE-i;break}}
+ buf=buf.slice(r1,r2);SIZE=buf.length;
+ let best=-1,bestCorr=0;
+ for(let lag=20;lag<SIZE/2;lag++){
+  let corr=0;
+  for(let i=0;i<SIZE-lag;i++)corr+=buf[i]*buf[i+lag];
+  corr/=SIZE-lag;
+  if(corr>bestCorr){bestCorr=corr;best=lag}
+ }
+ return best>0?sr/best:-1;
+}
+function draw(data){
+ const c=document.getElementById("chart"),g=c.getContext("2d");
+ const dpr=devicePixelRatio||1,w=c.clientWidth,h=c.clientHeight;
+ if(c.width!==w*dpr||c.height!==h*dpr){c.width=w*dpr;c.height=h*dpr}
+ g.clearRect(0,0,w,h);g.beginPath();g.strokeStyle="#65d68d";g.lineWidth=2;
+ for(let i=0;i<data.length;i++){let x=i/(data.length-1)*w,y=h/2-data[i]*h*3;if(i===0)g.moveTo(x,y);else g.lineTo(x,y)}
+ g.stroke();
+}
+function applyMicPitch(){
+ if(!currentMicPitch){alert("Belum ada pitch yang terdeteksi.");return}
+ // Pemetaan Hz suara manusia ke rentang TTS 1–20.
+ // 200 Hz dijadikan titik tengah sekitar pitch 10.
+ pitch=Math.max(1,Math.min(20,Math.round((currentMicPitch/20)*100)/100));
+ update();
+}
+speechSynthesis.onvoiceschanged=loadVoices;
+loadVoices();update();
+</script>
+</body>
+</html>

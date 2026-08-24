@@ -84,10 +84,18 @@ select{width:100%;padding:11px;border:1px solid #ccc;border-radius:10px;font-siz
 <div class="control">
 <div class="head"><span>📁 Tes File Suara</span></div>
 <div class="uploadBox">
-<div>Upload file audio untuk dibandingkan dengan TTS.</div>
-<input type="file" id="audioFile" accept="audio/*">
+<div><strong>Jenis file yang dapat di-upload:</strong></div>
+<div class="note" style="margin-top:5px">
+Audio: MP3, WAV, OGG, M4A, AAC, FLAC, WebM, AIFF dan format audio lain yang didukung browser.
+<br>
+Video yang mengandung suara: MP4, AVI, MOV, MKV, WebM dan format video lain yang didukung browser.
+<br>
+<strong>Catatan:</strong> file harus memiliki track suara dan formatnya harus dapat diputar oleh browser.
+</div>
+<input type="file" id="audioFile"
+accept="audio/*,video/mp4,video/webm,video/ogg,video/quicktime,video/x-msvideo,video/x-matroska">
 <div class="fileInfo" id="fileInfo">Belum ada file dipilih.</div>
-<button class="fileTest" onclick="playUploaded()">▶️ Dengarkan File</button>
+<button class="fileTest" onclick="playUploaded()">▶️ Dengarkan & Analisis File</button>
 </div>
 </div>
 
@@ -158,8 +166,8 @@ document.getElementById("audioFile").addEventListener("change", function(){
    document.getElementById("fileInfo").textContent="Belum ada file dipilih.";
    return;
  }
- if(!file.type.startsWith("audio/")){
-   alert("Pilih file audio seperti MP3, WAV, OGG, atau M4A.");
+ if(!file.type.startsWith("audio/") && !file.type.startsWith("video/")){
+   alert("Pilih file audio/video yang mengandung suara dan didukung browser.");
    this.value="";
    return;
  }

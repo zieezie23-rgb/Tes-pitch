@@ -10,6 +10,11 @@ body{margin:0;background:#eef7ff;font-family:Arial,sans-serif;padding:14px;color
 .card{max-width:480px;margin:auto;background:#fff;border-radius:22px;padding:20px;box-shadow:0 8px 25px #0002}
 h1{text-align:center;margin:0 0 15px}
 .sentence{background:#fff8dc;border-radius:14px;padding:15px;text-align:center;font-size:20px;font-weight:bold}
+textarea{width:100%;resize:vertical;padding:12px;border:1px solid #ccc;border-radius:10px;font:inherit;font-size:17px;margin-top:8px}
+.uploadBox{border:1px dashed #aaa;border-radius:14px;padding:14px;margin-top:10px;background:#fafafa}
+.uploadBox input{width:100%;margin-top:8px}
+.fileInfo{font-size:13px;color:#666;margin-top:7px;word-break:break-word}
+.fileTest{width:100%;margin-top:9px;background:#0ea5a8;color:#fff}
 .control{margin:18px 0}.head{display:flex;justify-content:space-between;font-weight:bold}.value{font-size:21px}
 .row{display:flex;gap:9px;margin-top:8px}button{flex:1;border:0;border-radius:12px;padding:12px;font-size:16px;font-weight:bold;background:#e8eef7}
 button:active{transform:scale(.97)}
@@ -32,7 +37,10 @@ select{width:100%;padding:11px;border:1px solid #ccc;border-radius:10px;font-siz
 <body>
 <div class="card">
 <h1>🔊 Uji TTS</h1>
-<div class="sentence">"hallo, ayo belajar bersama"</div>
+<div class="control">
+<div class="head"><span>💬 Kalimat yang diucapkan</span></div>
+<textarea id="textInput" rows="3">hallo, ayo belajar bersama</textarea>
+</div>
 
 <div class="control">
 <div class="head"><span>🎵 Pitch</span><span class="value" id="pitchValue">1.00</span></div>
@@ -56,8 +64,17 @@ select{width:100%;padding:11px;border:1px solid #ccc;border-radius:10px;font-siz
 </div>
 
 <button class="listen" onclick="speak()">🔊 Dengarkan</button>
-<button class="stop" onclick="stopSpeak()">⏹ Berhenti</button>
 <button class="auto" id="autoBtn" onclick="toggleAuto()">✨ Auto Tone: OFF</button>
+
+<div class="control">
+<div class="head"><span>📁 Tes File Suara</span></div>
+<div class="uploadBox">
+<div>Upload file audio untuk dibandingkan dengan TTS.</div>
+<input type="file" id="audioFile" accept="audio/*">
+<div class="fileInfo" id="fileInfo">Belum ada file dipilih.</div>
+<button class="fileTest" onclick="playUploaded()">▶️ Dengarkan File</button>
+</div>
+</div>
 
 <div class="mic">
 <h3>🎤 Pengukur Microphone</h3>
@@ -78,7 +95,8 @@ Untuk microphone, buka halaman melalui HTTPS atau localhost dan izinkan akses mi
 </div>
 
 <script>
-const text="hallo, ayo belajar bersama";
+let uploadedAudio=null;
+const textInput=document.getElementById("textInput");
 let pitch=1,rate=.5,voices=[],autoTone=false;
 let ctx=null,analyser=null,stream=null,raf=null,currentMicPitch=0;
 const pv=document.getElementById("pitchValue"),rv=document.getElementById("rateValue"),vs=document.getElementById("voiceSelect");
@@ -88,14 +106,28 @@ function changePitch(x){pitch=Math.max(1,Math.min(20,Math.round((pitch+x)*100)/1
 function changeRate(x){rate=Math.max(.5,Math.min(3,Math.round((rate+x)*100)/100));update()}
 
 function loadVoices(){
- voices=speechSynthesis.getVoices();vs.innerHTML="";
+ voices=speechSynthesis.getVoices();
+ vs.innerHTML="";
  const id=voices.filter(v=>v.lang&&v.lang.toLowerCase().startsWith("id"));
- const list=id.length?id:voices;
- list.forEach(v=>{let o=document.createElement("option");o.value=voices.indexOf(v);o.textContent=v.name+" — "+v.lang;vs.appendChild(o)});
+ const other=voices.filter(v=>!v.lang||!v.lang.toLowerCase().startsWith("id"));
+ const list=[...id,...other];
+
+ list.forEach((v)=>{
+   const o=document.createElement("option");
+   o.value=voices.indexOf(v);
+   const local=v.lang&&v.lang.toLowerCase().startsWith("id")?"🇮🇩 ":"🌐 ";
+   o.textContent=local+v.name+" — "+v.lang;
+   vs.appendChild(o);
+ });
  if(!list.length)vs.innerHTML="<option>Voice TTS tidak ditemukan</option>";
 }
 function speak(){
  speechSynthesis.cancel();
+ const text=textInput.value.trim();
+ if(!text){
+   textInput.focus();
+   return;
+ }
  let p=pitch;
  if(autoTone)p=Math.max(1,Math.min(20,p+0.35*Math.sin(Date.now()/140)));
  const u=new SpeechSynthesisUtterance(text);
@@ -103,7 +135,32 @@ function speak(){
  const i=parseInt(vs.value);if(!isNaN(i)&&voices[i])u.voice=voices[i];
  speechSynthesis.speak(u);
 }
-function stopSpeak(){speechSynthesis.cancel()}
+
+document.getElementById("audioFile").addEventListener("change", function(){
+ const file=this.files[0];
+ if(!file){
+   uploadedAudio=null;
+   document.getElementById("fileInfo").textContent="Belum ada file dipilih.";
+   return;
+ }
+ if(!file.type.startsWith("audio/")){
+   alert("Pilih file audio seperti MP3, WAV, OGG, atau M4A.");
+   this.value="";
+   return;
+ }
+ uploadedAudio=URL.createObjectURL(file);
+ document.getElementById("fileInfo").textContent=file.name+" • "+Math.round(file.size/1024)+" KB";
+});
+
+function playUploaded(){
+ if(!uploadedAudio){
+   alert("Pilih file audio terlebih dahulu.");
+   return;
+ }
+ speechSynthesis.cancel();
+ const a=new Audio(uploadedAudio);
+ a.play().catch(()=>alert("File audio tidak dapat diputar."));
+}
 
 // Tekan sekali = satu langkah. Tekan dan tahan = terus berubah.
 // Berfungsi untuk touch screen dan mouse.
